@@ -195,6 +195,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_error(404)
         elif path == "/api/crm/invoice":
             self.handle_crm_add_invoice(data)
+        elif path == "/health":
+            self.handle_health()
         elif path == "/api/crm/stats":
             self.handle_crm_stats()
         elif path == "/api/crm/invoices/pending":
@@ -479,7 +481,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json({"success": True})
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
-            
+    
+    def handle_health(self):
+        """Health check endpoint"""
+        from datetime import datetime
+        health = {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "supabase_available": SUPABASE_AVAILABLE
+        }
+        # Test Supabase connection if available
+        if SUPABASE_AVAILABLE:
+            try:
+                crm = SupabaseCRMClient()
+                stats = crm.get_dashboard_stats()
+                health["supabase_connected"] = True
+                health["database"] = "connected"
+            except Exception as e:
+                health["supabase_connected"] = False
+                health["database"] = f"error: {str(e)}"
+        else:
+            health["supabase_connected"] = False
+            health["database"] = "supabase package not installed"
+        
+        self.send_json(health)
+    
     def handle_crm_list_tasks(self):
         """List tasks"""
         if not SUPABASE_AVAILABLE:

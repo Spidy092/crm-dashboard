@@ -67,20 +67,37 @@ class SupabaseCRMClient:
         if "last_contact" not in data:
             data["last_contact"] = datetime.now().date().isoformat()
 
-        result = self.supabase.table("clients").insert(data).execute()
+        try:
+            result = self.supabase.table("clients").insert(data).execute()
+        except Exception as e:
+            error_msg = str(e)
+            # Provide helpful hints based on error type
+            if "does not exist" in error_msg or "relation" in error_msg:
+                raise Exception(f"Database table 'clients' does not exist. Run the SQL setup script from SETUP.md. Original error: {error_msg}") from e
+            elif "permission denied" in error_msg or "row security" in error_msg or "policy" in error_msg:
+                raise Exception(f"Permission denied. Check Row Level Security policies in Supabase. Original error: {error_msg}") from e
+            elif "invalid credentials" in error_msg or "API key" in error_msg or "Unauthorized" in error_msg:
+                raise Exception(f"Invalid Supabase credentials. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables. Original error: {error_msg}") from e
+            else:
+                raise Exception(f"Database error: {error_msg}") from e
+        
         if result.data:
             client_id = result.data[0]['id']
-            # Log interaction
-            self.add_interaction({
-                "client_id": client_id,
-                "summary": "Client added to CRM",
-                "type": "System",
-                "followup_needed": bool(data.get("next_followup")),
-                "followup_date": data.get("next_followup")
-            })
+            # Log interaction (non-critical - don't fail if this errors)
+            try:
+                self.add_interaction({
+                    "client_id": client_id,
+                    "summary": "Client added to CRM",
+                    "type": "System",
+                    "followup_needed": bool(data.get("next_followup")),
+                    "followup_date": data.get("next_followup")
+                })
+            except Exception as e:
+                # Log but don't fail client creation
+                print(f"Warning: Failed to log interaction: {e}")
             return client_id
         else:
-            raise Exception("Failed to add client")
+            raise Exception("Failed to add client: insert returned no data")
 
     def get_client(self, client_id: str) -> Optional[Dict]:
         """Get client by ID"""
