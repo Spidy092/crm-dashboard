@@ -11,21 +11,30 @@ from typing import Optional, Dict, List, Any
 from supabase import create_client, Client
 import os
 
+# Load environment variables from .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # dotenv not installed, will use system env vars
+
 class SupabaseCRMClient:
     def __init__(self):
-        """Initialize Supabase client from config file"""
-        config_path = Path.home() / ".nanobot" / "workspace" / "supabase_config.json"
-        if not config_path.exists():
-            raise FileNotFoundError(
-                f"Supabase config not found at {config_path}\n"
-                "Create it with your Supabase URL and keys."
+        """Initialize Supabase client from environment variables"""
+        # Get credentials from environment
+        url = os.getenv("SUPABASE_URL")
+        service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+        if not url or not service_role_key:
+            raise ValueError(
+                "Supabase credentials not found in environment.\n"
+                "Please set:\n"
+                "  SUPABASE_URL\n"
+                "  SUPABASE_SERVICE_ROLE_KEY\n"
+                "You can put these in a .env file (recommended) or export them."
             )
 
-        config = json.loads(config_path.read_text())
-        self.supabase: Client = create_client(
-            config["url"],
-            config["service_role_key"]  # Use service_role for admin access
-        )
+        self.supabase: Client = create_client(url, service_role_key)
         self._ensure_tables_exist()
 
     def _ensure_tables_exist(self):
