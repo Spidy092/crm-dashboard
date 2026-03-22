@@ -114,6 +114,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_crm_list_projects()
         elif path == "/api/crm/project":
             self.handle_crm_add_project(data)
+        elif path == "/api/crm/invoice":
+            self.handle_crm_add_invoice(data)
         elif path == "/api/crm/stats":
             self.handle_crm_stats()
         elif path == "/api/crm/invoices/pending":
@@ -137,11 +139,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             data = {}
         
         if path.startswith("/api/crm/client/"):
-            client_id = path.split("/")[3]
+            client_id = path.split("/")[4]
             self.handle_crm_update_client(client_id, data)
         elif path.startswith("/api/crm/invoice/"):
-            invoice_id = path.split("/")[3]
+            invoice_id = path.split("/")[4]
             self.handle_crm_mark_invoice_paid(invoice_id)
+        elif path.startswith("/api/crm/project/"):
+            project_id = path.split("/")[4]
+            self.handle_crm_update_project(project_id, data)
         else:
             self.send_error(404)
     
@@ -221,6 +226,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
+    def handle_crm_update_project(self, project_id, data):
+        """Update project"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed. Run: pip install supabase", "setup_required": True}, 500)
+            return
+        try:
+            crm = SupabaseCRMClient()
+            crm.update_project(project_id, data)
+            self.send_json({"success": True})
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
+
     def handle_crm_list_projects(self):
         """List all projects"""
         if not SUPABASE_AVAILABLE:
@@ -249,6 +266,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             crm = SupabaseCRMClient()
             project_id = crm.add_project(data)
             self.send_json({"success": True, "project_id": project_id})
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
+
+    def handle_crm_add_invoice(self, data):
+        """Add new invoice"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed. Run: pip install supabase", "setup_required": True}, 500)
+            return
+            
+        required = ["client_id", "amount", "due_date"]
+        for field in required:
+            if not data.get(field):
+                self.send_json({"error": f"Missing required field: {field}"}, 400)
+                return
+                
+        try:
+            crm = SupabaseCRMClient()
+            invoice_id = crm.add_invoice(data)
+            self.send_json({"success": True, "invoice_id": invoice_id})
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
@@ -1417,10 +1453,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             <th>Price</th>
                             <th>Paid</th>
                             <th>Balance</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="projects-table">
-                        <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+                        <tr><td colspan="8" class="empty-state">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1429,7 +1466,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         <!-- Invoices Tab -->
         <div id="tab-invoices" class="tab-content">
             <div class="card">
-                <h2>Pending Invoices</h2>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <h2>Pending Invoices</h2>
+                    <button class="btn btn-sm" onclick="openModal('addInvoiceModal')">
+                        <i class="fas fa-plus"></i> Create Invoice
+                    </button>
+                </div>
                 <table>
                     <thead>
                         <tr>
@@ -1574,6 +1616,48 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         </div>
     </div>
 
+    <!-- Add Invoice Modal -->
+    <div id="addInvoiceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create New Invoice</h2>
+                <button class="close-modal" onclick="closeModal('addInvoiceModal')">&times;</button>
+            </div>
+            <form id="addInvoiceForm">
+                <div class="form-group">
+                    <label>Client *</label>
+                    <select name="client_id" id="invoice-client-select" required>
+                        <option value="">Select client...</option>
+                    </select>
+                </div>
+                <div class="row">
+                    <div class="form-group">
+                        <label>Amount (₹) *</label>
+                        <input type="number" name="amount" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Due Date *</label>
+                        <input type="date" name="due_date" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select name="status">
+                        <option value="Pending">Pending</option>
+                        <option value="Paid">Paid</option>
+                        <option value="Overdue">Overdue</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea name="notes" rows="3"></textarea>
+                </div>
+                <button type="submit" class="btn">Create Invoice</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Alert Area -->
     <div id="alert-area" style="position:fixed;top:20px;right:20px;z-index:2000;max-width:300px;"></div>
 
@@ -1712,6 +1796,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         // Load projects
         async function loadProjects() {
             try {
+                if (clients.length === 0) await loadClients(); // Ensure clients are loaded
                 const res = await fetch('/api/crm/projects');
                 const data = await res.json();
                 if (data.error) {
@@ -1728,28 +1813,68 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             }
         }
 
+        function getClientName(id) {
+            const client = clients.find(c => c.id === id);
+            return client ? escapeHtml(client.name) : escapeHtml(id);
+        }
+
         function renderProjects(list) {
             const tbody = document.getElementById('projects-table');
             if (list.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No projects found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No projects found</td></tr>';
                 return;
             }
             tbody.innerHTML = list.map(p => `
                 <tr>
-                    <td>${p.id}</td>
-                    <td>${escapeHtml(p.client_id)}</td>
-                    <td>${escapeHtml(p.name)}</td>
+                    <td><span class="badge" title="${p.id}">${p.id.substring(0, 8)}...</span></td>
+                    <td>${getClientName(p.client_id)}</td>
+                    <td><strong>${escapeHtml(p.name)}</strong></td>
                     <td><span class="status status-${p.status.replace(' ', '-').toLowerCase()}">${p.status}</span></td>
                     <td>₹${Number(p.price || 0).toLocaleString()}</td>
                     <td>₹${Number(p.paid_amount || 0).toLocaleString()}</td>
                     <td>₹${Number(p.balance || 0).toLocaleString()}</td>
+                    <td class="actions">
+                        <button class="btn btn-sm" onclick="updateProjectPayment('${p.id}', ${p.price || 0}, ${p.paid_amount || 0})">Update</button>
+                    </td>
                 </tr>
             `).join('');
+        }
+
+        async function updateProjectPayment(id, price, currentPaid) {
+            const newPaidStr = prompt(\`Update Payment:\\nTotal Price: ₹\${price}\\nCurrent Paid: ₹\${currentPaid}\\n\\nEnter new total Paid Amount:\`, currentPaid);
+            if (newPaidStr === null) return;
+            
+            const newPaid = Number(newPaidStr);
+            if (isNaN(newPaid)) {
+                showAlert('Invalid amount entered', 'error');
+                return;
+            }
+            
+            const newBalance = price - newPaid;
+            
+            try {
+                const res = await fetch(\`/api/crm/project/\${id}\`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        paid_amount: newPaid,
+                        balance: newBalance
+                    })
+                });
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+                
+                showAlert('Payment updated!');
+                loadProjects();
+            } catch (e) {
+                showAlert('Failed to update: ' + e.message, 'error');
+            }
         }
 
         // Load invoices
         async function loadInvoices() {
             try {
+                if (clients.length === 0) await loadClients(); // Ensure clients are loaded
                 const res = await fetch('/api/crm/invoices/pending');
                 const data = await res.json();
                 if (data.error) {
@@ -1775,7 +1900,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             tbody.innerHTML = list.map(inv => `
                 <tr>
                     <td>${inv.invoice_no}</td>
-                    <td>${escapeHtml(inv.client_id)}</td>
+                    <td>${getClientName(inv.client_id)}</td>
                     <td>₹${Number(inv.amount).toLocaleString()}</td>
                     <td>${inv.due_date}</td>
                     <td><span class="status status-${inv.status}">${inv.status}</span></td>
@@ -1786,12 +1911,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             `).join('');
         }
 
-        // Populate client select in add project modal
+        // Populate client select in add project and add invoice modal
         async function populateClientSelect() {
-            const select = document.getElementById('project-client-select');
+            const selectProject = document.getElementById('project-client-select');
+            const selectInvoice = document.getElementById('invoice-client-select');
             if (clients.length === 0) await loadClients();
-            select.innerHTML = '<option value="">Select client...</option>' +
-                clients.map(c => `<option value="${c.id}">${c.name} (${c.company})</option>`).join('');
+            const options = '<option value="">Select client...</option>' +
+                clients.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.company)})</option>`).join('');
+            if(selectProject) selectProject.innerHTML = options;
+            if(selectInvoice) selectInvoice.innerHTML = options;
         }
 
         // Add client form
@@ -1840,6 +1968,32 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 showAlert('Error: ' + err.message, 'error');
             }
         });
+
+        // Add invoice form
+        const addInvoiceForm = document.getElementById('addInvoiceForm');
+        if (addInvoiceForm) {
+            addInvoiceForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const data = Object.fromEntries(formData.entries());
+                try {
+                    const res = await fetch('/api/crm/invoice', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    const result = await res.json();
+                    if (result.error) throw new Error(result.error);
+                    showAlert('Invoice created!');
+                    closeModal('addInvoiceModal');
+                    e.target.reset();
+                    loadInvoices();
+                    loadStats();
+                } catch (err) {
+                    showAlert('Error: ' + err.message, 'error');
+                }
+            });
+        }
 
         // Mark invoice paid
         async function markPaid(invoiceId) {
