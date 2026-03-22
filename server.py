@@ -1841,7 +1841,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         }
 
         async function updateProjectPayment(id, price, currentPaid) {
-            const newPaidStr = prompt(\`Update Payment:\\nTotal Price: ₹\${price}\\nCurrent Paid: ₹\${currentPaid}\\n\\nEnter new total Paid Amount:\`, currentPaid);
+            const newPaidStr = prompt(`Update Payment:\nTotal Price: ₹${price}\nCurrent Paid: ₹${currentPaid}\n\nEnter new total Paid Amount:`, currentPaid);
             if (newPaidStr === null) return;
             
             const newPaid = Number(newPaidStr);
@@ -1853,7 +1853,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             const newBalance = price - newPaid;
             
             try {
-                const res = await fetch(\`/api/crm/project/\${id}\`, {
+                const res = await fetch(`/api/crm/project/${id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
