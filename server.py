@@ -33,6 +33,62 @@ PROJECTS = {
 class DashboardHandler(SimpleHTTPRequestHandler):
     """Custom handler for project dashboard"""
     
+    def is_authenticated(self):
+        if not hasattr(self.server, "session_token"):
+            return True
+        from http import cookies
+        if "Cookie" in self.headers:
+            c = cookies.SimpleCookie(self.headers["Cookie"])
+            if "crm_session" in c:
+                return c["crm_session"].value == self.server.session_token
+        return False
+
+    def serve_login_ui(self):
+        """Serve simple login page"""
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>CRM Login</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body { background: #0a0a0a; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .login-box { background: #141414; padding: 40px; border-radius: 12px; border: 1px solid #333; width: 90%; max-width: 400px; text-align: center; }
+                input { width: 100%; padding: 12px; margin: 20px 0; background: #000; border: 1px solid #333; color: white; border-radius: 8px; box-sizing: border-box; }
+                button { background: #F4A31E; color: black; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; width: 100%; cursor: pointer; }
+                .error { color: #ef4444; margin-bottom: 10px; display: none; }
+            </style>
+        </head>
+        <body>
+            <div class="login-box">
+                <h2>CRM Secure Login</h2>
+                <div id="err" class="error">Invalid password</div>
+                <form id="loginForm">
+                    <input type="password" name="password" placeholder="Enter admin password" required>
+                    <button type="submit">Login</button>
+                </form>
+            </div>
+            <script>
+                document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const pwd = new FormData(e.target).get('password');
+                    const res = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({password: pwd})
+                    });
+                    if (res.ok) { window.location.reload(); }
+                    else { document.getElementById('err').style.display = 'block'; }
+                });
+            </script>
+        </body>
+        </html>
+        """
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        self.wfile.write(html.encode('utf-8'))
+        
     def do_GET(self):
         """Handle GET requests"""
         parsed = urlparse(self.path)
@@ -52,18 +108,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             file = params.get("file", [""])[0]
             self.serve_file_content(project, file)
         elif path == "/crm":
+            if not self.is_authenticated():
+                self.serve_login_ui()
+                return
             self.serve_crm_ui()
-        elif path == "/api/crm/clients":
-            self.handle_crm_list_clients()
-        elif path == "/api/crm/projects":
-            self.handle_crm_list_projects()
-        elif path == "/api/crm/stats":
-            self.handle_crm_stats()
-        elif path == "/api/crm/invoices/pending":
-            self.handle_crm_pending_invoices()
-        elif path.startswith("/api/crm/client/"):
-            client_id = path.split("/")[3]
-            self.handle_crm_get_client(client_id)
+        elif path.startswith("/api/crm/"):
+            if not self.is_authenticated():
+                self.send_response(401)
+                self.end_headers()
+                return
+            if path == "/api/crm/clients":
+                self.handle_crm_list_clients()
+            elif path == "/api/crm/projects":
+                self.handle_crm_list_projects()
+            elif path == "/api/crm/stats":
+                self.handle_crm_stats()
+            elif path == "/api/crm/invoices/pending":
+                self.handle_crm_pending_invoices()
+            elif path.startswith("/api/crm/client/"):
+                client_id = path.split("/")[4]
+                if path.endswith("/interactions"):
+                    self.handle_crm_get_client_interactions(client_id)
+                else:
+                    self.handle_crm_get_client(client_id)
         elif path.startswith("/preview/"):
             project = path.split("/")[2]
             parts = path.split("/")
@@ -96,30 +163,44 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         
         if path == "/api/push":
             self.handle_push(data)
+        elif path == "/api/login":
+            pwd = data.get("password")
+            if pwd == os.environ.get("ADMIN_PASSWORD", "admin123"):
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Set-Cookie', f'crm_session={self.server.session_token}; Path=/; HttpOnly')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True}).encode('utf-8'))
+            else:
+                self.send_json({"error": "Invalid password"}, 401)
         elif path == "/api/save":
             self.handle_save(data)
         elif path == "/api/create":
             self.handle_create(data)
-        elif path == "/crm":
-            self.serve_crm_ui()
-        elif path == "/api/crm/clients":
-            self.handle_crm_list_clients()
-        elif path == "/api/crm/client":
-            self.handle_crm_add_client(data)
-        elif path.startswith("/api/crm/client/"):
-            client_id = path.split("/")[3]
-            if self.command == "GET":
-                self.handle_crm_get_client(client_id)
-        elif path == "/api/crm/projects":
-            self.handle_crm_list_projects()
-        elif path == "/api/crm/project":
-            self.handle_crm_add_project(data)
+        elif path.startswith("/api/crm/"):
+            if not self.is_authenticated():
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            if path == "/api/crm/client":
+                self.handle_crm_add_client(data)
+            elif path == "/api/crm/project":
+                self.handle_crm_add_project(data)
+            elif path == "/api/crm/invoice":
+                self.handle_crm_add_invoice(data)
+            elif path == "/api/crm/task":
+                self.handle_crm_add_task(data)
+            elif path == "/api/crm/interaction":
+                self.handle_crm_add_interaction(data)
+            else:
+                self.send_error(404)
         elif path == "/api/crm/invoice":
             self.handle_crm_add_invoice(data)
         elif path == "/api/crm/stats":
             self.handle_crm_stats()
         elif path == "/api/crm/invoices/pending":
             self.handle_crm_pending_invoices()
+        elif path == "/api/crm/tasks":
+            self.handle_crm_list_tasks()
         elif path == "/api/crm/interaction":
             self.handle_crm_add_interaction(data)
         else:
@@ -137,6 +218,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except:
             data = {}
+            
+        if path.startswith("/api/crm/"):
+            if not self.is_authenticated():
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
         
         if path.startswith("/api/crm/client/"):
             client_id = path.split("/")[4]
@@ -147,6 +233,45 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path.startswith("/api/crm/project/"):
             project_id = path.split("/")[4]
             self.handle_crm_update_project(project_id, data)
+        elif path.startswith("/api/crm/task/"):
+            task_id = path.split("/")[4]
+            self.handle_crm_update_task(task_id, data)
+        else:
+            self.send_error(404)
+
+    def do_DELETE(self):
+        """Handle DELETE requests"""
+        parsed = urlparse(self.path)
+        path = parsed.path
+        
+        if path.startswith("/api/crm/"):
+            if not self.is_authenticated():
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+                
+            parts = path.split("/")
+            if len(parts) >= 5:
+                entity = parts[3]
+                entity_id = parts[4]
+                
+                try:
+                    crm = SupabaseCRMClient()
+                    if entity == "client":
+                        crm.delete_client(entity_id)
+                    elif entity == "project":
+                        crm.delete_project(entity_id)
+                    elif entity == "invoice":
+                        crm.delete_invoice(entity_id)
+                    elif entity == "task":
+                        crm.delete_task(entity_id)
+                    else:
+                        self.send_json({"error": "Unknown entity"}, 400)
+                        return
+                    self.send_json({"success": True})
+                except Exception as e:
+                    self.send_json({"error": str(e)}, 500)
+            else:
+                self.send_error(404)
         else:
             self.send_error(404)
     
@@ -200,17 +325,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": str(e)}, 500)
     
     def handle_crm_get_client(self, client_id):
-        """Get single client"""
+        """Get a specific client"""
         if not SUPABASE_AVAILABLE:
-            self.send_json({"error": "Supabase not installed. Run: pip install supabase", "setup_required": True}, 500)
+            self.send_json({"error": "Supabase not installed"}, 500)
             return
+            
         try:
             crm = SupabaseCRMClient()
             client = crm.get_client(client_id)
             if client:
-                self.send_json(client)
+                self.send_json({"success": True, "client": client})
             else:
                 self.send_json({"error": "Client not found"}, 404)
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
+
+    def handle_crm_get_client_interactions(self, client_id):
+        """Get interactions for a specific client"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed"}, 500)
+            return
+        
+        try:
+            crm = SupabaseCRMClient()
+            interactions = crm.get_interactions(client_id)
+            self.send_json({"success": True, "interactions": interactions})
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
@@ -337,6 +476,45 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             crm = SupabaseCRMClient()
             crm.mark_invoice_paid(invoice_id)
+            self.send_json({"success": True})
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
+            
+    def handle_crm_list_tasks(self):
+        """List tasks"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed", "setup_required": True}, 500)
+            return
+            
+        try:
+            crm = SupabaseCRMClient()
+            tasks = crm.list_tasks()
+            self.send_json({"success": True, "tasks": tasks})
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
+
+    def handle_crm_add_task(self, data):
+        """Add new task"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed"}, 500)
+            return
+            
+        try:
+            crm = SupabaseCRMClient()
+            task_id = crm.add_task(data)
+            self.send_json({"success": True, "task_id": task_id})
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
+
+    def handle_crm_update_task(self, task_id, data):
+        """Update task"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed"}, 500)
+            return
+            
+        try:
+            crm = SupabaseCRMClient()
+            crm.update_task(task_id, data)
             self.send_json({"success": True})
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
@@ -1406,6 +1584,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             <button class="tab active" onclick="switchTab('clients')">Clients</button>
             <button class="tab" onclick="switchTab('projects')">Projects</button>
             <button class="tab" onclick="switchTab('invoices')">Invoices</button>
+            <button class="tab" onclick="switchTab('tasks')">Tasks</button>
         </div>
 
         <!-- Clients Tab -->
@@ -1485,6 +1664,35 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     </thead>
                     <tbody id="invoices-table">
                         <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Tasks Tab -->
+        <div id="tab-tasks" class="tab-content">
+            <div class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <h2>Tasks</h2>
+                    <button class="btn btn-sm" onclick="openModal('addTaskModal')">
+                        <i class="fas fa-plus"></i> Add Task
+                    </button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Description</th>
+                            <th>Project</th>
+                            <th>Assignee</th>
+                            <th>Status</th>
+                            <th>Priority</th>
+                            <th>Due Date</th>
+                            <th>Hours</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tasks-table">
+                        <tr><td colspan="8" class="empty-state">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1653,8 +1861,77 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     <label>Notes</label>
                     <textarea name="notes" rows="3"></textarea>
                 </div>
+                </div>
                 <button type="submit" class="btn">Create Invoice</button>
             </form>
+        </div>
+    </div>
+
+    <!-- Add Task Modal -->
+    <div id="addTaskModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create New Task</h2>
+                <button class="close-modal" onclick="closeModal('addTaskModal')">&times;</button>
+            </div>
+            <form id="addTaskForm">
+                <div class="form-group">
+                    <label>Project *</label>
+                    <select name="project_id" id="task-project-select" required>
+                        <option value="">Select project...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Description *</label>
+                    <input type="text" name="description" required>
+                </div>
+                <div class="row">
+                    <div class="form-group">
+                        <label>Assignee</label>
+                        <input type="text" name="assignee" placeholder="e.g. Electro">
+                    </div>
+                    <div class="form-group">
+                        <label>Due Date</label>
+                        <input type="date" name="due_date">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select name="status">
+                            <option value="Todo">Todo</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Done">Done</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Priority</label>
+                        <select name="priority">
+                            <option value="Low">Low</option>
+                            <option value="Medium" selected>Medium</option>
+                            <option value="High">High</option>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" class="btn">Create Task</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- View Client Modal -->
+    <div id="viewClientModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>Client Profile</h2>
+                <button class="close-modal" onclick="closeModal('viewClientModal')">&times;</button>
+            </div>
+            <div id="clientProfileDetails" style="margin-bottom: 20px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                <!-- Filled via JS -->
+            </div>
+            <h3>Interaction History</h3>
+            <div id="clientInteractionsTimeline" style="margin-top: 10px; max-height: 400px; overflow-y: auto;">
+                <!-- Filled via JS -->
+            </div>
         </div>
     </div>
 
@@ -1666,6 +1943,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         let clients = [];
         let projects = [];
         let invoices = [];
+        let tasks = [];
 
         // Init
         document.addEventListener('DOMContentLoaded', () => {
@@ -1673,7 +1951,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             loadClients();
             loadProjects();
             loadInvoices();
+            loadTasks();
             populateClientSelect();
+            populateProjectSelect();
         });
 
         // Tab switching
@@ -1682,6 +1962,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById('tab-' + tab).classList.add('active');
+            if (tab === 'tasks') loadTasks();
         }
 
         // Modal functions
@@ -1778,6 +2059,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     <td class="actions">
                         <button class="btn btn-sm btn-secondary" onclick="viewClient('${c.id}')">View</button>
                         <button class="btn btn-sm" onclick="addInteraction('${c.id}')">Log</button>
+                        <button class="btn btn-sm btn-secondary" style="color:var(--red);" onclick="deleteRecord('client', '${c.id}')" title="Delete"><i class="fas fa-trash"></i></button>
                     </td>
                 </tr>
             `).join('');
@@ -1835,6 +2117,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     <td>₹${Number(p.balance || 0).toLocaleString()}</td>
                     <td class="actions">
                         <button class="btn btn-sm" onclick="updateProjectPayment('${p.id}', ${p.price || 0}, ${p.paid_amount || 0})">Update</button>
+                        <button class="btn btn-sm btn-secondary" style="color:var(--red);" onclick="deleteRecord('project', '${p.id}')" title="Delete"><i class="fas fa-trash"></i></button>
                     </td>
                 </tr>
             `).join('');
@@ -1906,9 +2189,83 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     <td><span class="status status-${inv.status}">${inv.status}</span></td>
                     <td class="actions">
                         <button class="btn btn-sm" onclick="markPaid('${inv.id}')">Mark Paid</button>
+                        <button class="btn btn-sm btn-secondary" style="color:var(--red);" onclick="deleteRecord('invoice', '${inv.id}')" title="Delete"><i class="fas fa-trash"></i></button>
                     </td>
                 </tr>
             `).join('');
+        }
+
+        // Populate project select in add task modal
+        async function populateProjectSelect() {
+            const selectTaskProj = document.getElementById('task-project-select');
+            if (!selectTaskProj) return;
+            if (projects.length === 0) await loadProjects();
+            selectTaskProj.innerHTML = '<option value="">Select project...</option>' +
+                projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${getClientName(p.client_id)})</option>`).join('');
+        }
+
+        // Load tasks
+        async function loadTasks() {
+            try {
+                if (projects.length === 0) await loadProjects();
+                const res = await fetch('/api/crm/tasks');
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+                tasks = data.tasks;
+                renderTasks();
+            } catch (e) {
+                showAlert('Failed to load tasks: ' + e.message, 'error');
+            }
+        }
+
+        function getProjectName(id) {
+            const project = projects.find(p => p.id === id);
+            return project ? escapeHtml(project.name) : escapeHtml(id);
+        }
+
+        function renderTasks() {
+            const tbody = document.getElementById('tasks-table');
+            if (tasks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No tasks found</td></tr>';
+                return;
+            }
+            tbody.innerHTML = tasks.map(t => `
+                <tr>
+                    <td><strong>${escapeHtml(t.description)}</strong></td>
+                    <td>${getProjectName(t.project_id)}</td>
+                    <td>${escapeHtml(t.assignee || '-')}</td>
+                    <td>
+                        <select onchange="updateTaskStatus('${t.id}', this.value)" style="padding:4px; max-width:120px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px;">
+                            <option value="Todo" ${t.status === 'Todo' ? 'selected' : ''}>Todo</option>
+                            <option value="In Progress" ${t.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+                            <option value="Done" ${t.status === 'Done' ? 'selected' : ''}>Done</option>
+                        </select>
+                    </td>
+                    <td><span class="badge" ${t.priority==='High'?'style="background:var(--red);color:#fff;"':''}>${t.priority}</span></td>
+                    <td>${t.due_date || '-'}</td>
+                    <td>${t.hours_spent || 0}</td>
+                    <td class="actions">
+                        <button class="btn btn-sm btn-secondary" style="color:var(--red);" onclick="deleteRecord('task', '${t.id}')" title="Delete"><i class="fas fa-trash"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function updateTaskStatus(id, newStatus) {
+            try {
+                const res = await fetch(`/api/crm/task/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: newStatus })
+                });
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+                showAlert('Task status updated');
+                loadTasks();
+            } catch (err) {
+                showAlert('Failed to update status: ' + err.message, 'error');
+                loadTasks(); // Reset dropdown
+            }
         }
 
         // Populate client select in add project and add invoice modal
@@ -1995,6 +2352,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             });
         }
 
+        // Add task form
+        const addTaskForm = document.getElementById('addTaskForm');
+        if (addTaskForm) {
+            addTaskForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const data = Object.fromEntries(formData.entries());
+                try {
+                    const res = await fetch('/api/crm/task', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    const result = await res.json();
+                    if (result.error) throw new Error(result.error);
+                    showAlert('Task created!');
+                    closeModal('addTaskModal');
+                    e.target.reset();
+                    loadTasks();
+                } catch (err) {
+                    showAlert('Error: ' + err.message, 'error');
+                }
+            });
+        }
+
         // Mark invoice paid
         async function markPaid(invoiceId) {
             if (!confirm('Mark this invoice as paid?')) return;
@@ -2010,11 +2392,65 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             }
         }
 
+        async function deleteRecord(type, id) {
+            if (!confirm(`Are you sure you want to delete this ${type}? This action cannot be undone.`)) return;
+            try {
+                const res = await fetch(`/api/crm/${type}/${id}`, { method: 'DELETE' });
+                const result = await res.json();
+                if (result.error) throw new Error(result.error);
+                showAlert(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully!`);
+                if (type === 'client') { loadClients(); populateClientSelect(); }
+                if (type === 'project') loadProjects();
+                if (type === 'invoice') loadInvoices();
+                loadStats();
+            } catch (err) {
+                showAlert('Error: ' + err.message, 'error');
+            }
+        }
+
         // View client details
-        function viewClient(clientId) {
+        async function viewClient(clientId) {
             const client = clients.find(c => c.id === clientId);
-            if (client) {
-                alert('Client: ' + client.name + '\\nCompany: ' + client.company + '\\nPhone: ' + client.phone + '\\nEmail: ' + client.email + '\\nStatus: ' + client.status + '\\nBudget: ₹' + (client.budget || 0));
+            if (!client) return;
+            
+            const profileHtml = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div><strong>Name:</strong> ${escapeHtml(client.name)}</div>
+                    <div><strong>Company:</strong> ${escapeHtml(client.company)}</div>
+                    <div><strong>Phone:</strong> ${client.phone}</div>
+                    <div><strong>Email:</strong> ${escapeHtml(client.email)}</div>
+                    <div><strong>Status:</strong> <span class="status status-${client.status.replace(' ', '-').toLowerCase()}">${client.status}</span></div>
+                    <div><strong>Budget:</strong> ₹${Number(client.budget || 0).toLocaleString()}</div>
+                    <div style="grid-column: 1 / -1;"><strong>Notes:</strong> ${escapeHtml(client.notes || 'None')}</div>
+                </div>
+            `;
+            document.getElementById('clientProfileDetails').innerHTML = profileHtml;
+            document.getElementById('clientInteractionsTimeline').innerHTML = '<div style="padding: 10px; color: var(--muted);">Loading history...</div>';
+            
+            openModal('viewClientModal');
+
+            try {
+                const res = await fetch(`/api/crm/client/${clientId}/interactions`);
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+                
+                const tl = document.getElementById('clientInteractionsTimeline');
+                if (!data.interactions || data.interactions.length === 0) {
+                    tl.innerHTML = '<div style="padding: 10px; color: var(--muted); border-left: 2px solid var(--border); margin-left: 10px;">No interaction history found.</div>';
+                    return;
+                }
+                
+                tl.innerHTML = data.interactions.map(int => `
+                    <div style="padding: 15px; margin-bottom: 10px; border-left: 2px solid var(--border); margin-left: 10px; position: relative; background: #0a0a0a; border-radius: 4px;">
+                        <div style="position: absolute; left: -6px; top: 15px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent);"></div>
+                        <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 4px;">
+                            ${new Date(int.timestamp).toLocaleString()} • <span class="badge">${int.type || 'Note'}</span>
+                        </div>
+                        <div style="font-weight: 500;">${escapeHtml(int.summary)}</div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                document.getElementById('clientInteractionsTimeline').innerHTML = `<div style="color: var(--red);">Error loading history: ${err.message}</div>`;
             }
         }
 
@@ -2085,7 +2521,13 @@ def main():
     print("Press Ctrl+C to stop")
     print("=" * 50)
     
+    admin_pass = os.environ.get("ADMIN_PASSWORD", "admin123")
+    print(f"🔒 Security active. Default admin password: {admin_pass}")
+    print("=" * 50)
+    
     server = HTTPServer(("0.0.0.0", PORT), DashboardHandler)
+    import uuid
+    server.session_token = str(uuid.uuid4())
     
     try:
         server.serve_forever()
