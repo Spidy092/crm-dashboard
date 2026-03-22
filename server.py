@@ -39,10 +39,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         path = parsed.path
         params = parse_qs(parsed.query)
         
-        # Debug log
-        with open('/data/data/com.termux/files/home/.nanobot/workspace/pm-dashboard/access.log', 'a') as f:
-            f.write(f"GET {path}\n")
-        
         # Routes
         if path == "/" or path == "/index.html":
             self.serve_dashboard()
