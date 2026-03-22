@@ -93,6 +93,11 @@ class SupabaseCRMClient:
         result = self.supabase.table("clients").update(clean_updates).eq("id", client_id).execute()
         return result.data
 
+    def delete_client(self, client_id: str):
+        """Delete a client"""
+        result = self.supabase.table("clients").delete().eq("id", client_id).execute()
+        return result.data
+
     def list_clients(self, status: str = None) -> List[Dict]:
         """List all clients, optionally filtered by status"""
         query = self.supabase.table("clients").select("*")
@@ -136,6 +141,11 @@ class SupabaseCRMClient:
         """Update project"""
         clean_updates = {k: (v if v != "" else None) for k, v in updates.items()}
         result = self.supabase.table("projects").update(clean_updates).eq("id", project_id).execute()
+        return result.data
+        
+    def delete_project(self, project_id: str):
+        """Delete a project"""
+        result = self.supabase.table("projects").delete().eq("id", project_id).execute()
         return result.data
 
     def get_project(self, project_id: str) -> Optional[Dict]:
@@ -229,6 +239,11 @@ class SupabaseCRMClient:
         result = self.supabase.table("invoices").update(updates).eq("id", invoice_id).execute()
         return result.data
 
+    def delete_invoice(self, invoice_id: str):
+        """Delete an invoice"""
+        result = self.supabase.table("invoices").delete().eq("id", invoice_id).execute()
+        return result.data
+
     def get_pending_invoices(self) -> List[Dict]:
         """Get all pending/overdue invoices"""
         result = self.supabase.table("invoices").select("*").in_("status", ["Pending", "Overdue"]).execute()
@@ -253,12 +268,7 @@ class SupabaseCRMClient:
 
     def add_task(self, task_data: Dict) -> str:
         """Create a task"""
-        result = self.supabase.table("tasks").select("id").execute()
-        next_num = len(result.data) + 1
-        task_id = f"TASK-{next_num:03d}"
-
         data = {
-            "id": task_id,
             "project_id": task_data["project_id"],
             "description": task_data["description"],
             "assignee": task_data.get("assignee", "Electro"),
@@ -267,9 +277,19 @@ class SupabaseCRMClient:
             "due_date": task_data.get("due_date"),
             "hours_spent": task_data.get("hours_spent", 0)
         }
+        
+        data = {k: (v if v != "" else None) for k, v in data.items()}
 
         result = self.supabase.table("tasks").insert(data).execute()
-        return task_id
+        return result.data[0]['id'] if result.data else None
+
+    def list_tasks(self, status: str = None) -> List[Dict]:
+        """List all tasks"""
+        query = self.supabase.table("tasks").select("*")
+        if status:
+            query = query.eq("status", status)
+        result = query.order("due_date", desc=False).execute()
+        return result.data
 
     def get_project_tasks(self, project_id: str) -> List[Dict]:
         """Get all tasks for a project"""
@@ -279,6 +299,11 @@ class SupabaseCRMClient:
     def update_task(self, task_id: str, updates: Dict):
         """Update task"""
         result = self.supabase.table("tasks").update(updates).eq("id", task_id).execute()
+        return result.data
+
+    def delete_task(self, task_id: str):
+        """Delete a task"""
+        result = self.supabase.table("tasks").delete().eq("id", task_id).execute()
         return result.data
 
     # ========== DASHBOARD STATS ==========
