@@ -53,13 +53,7 @@ class SupabaseCRMClient:
 
     def add_client(self, client_data: Dict) -> str:
         """Add a new client"""
-        # Generate client ID (human-readable)
-        result = self.supabase.table("clients").select("id").execute()
-        next_num = len(result.data) + 1
-        client_id = f"CLI-{next_num:03d}"
-
         data = {
-            "id": client_id,
             "name": client_data["name"],
             "phone": client_data.get("phone"),
             "email": client_data["email"],
@@ -77,6 +71,7 @@ class SupabaseCRMClient:
 
         result = self.supabase.table("clients").insert(data).execute()
         if result.data:
+            client_id = result.data[0]['id']
             # Log interaction
             self.add_interaction({
                 "client_id": client_id,
@@ -122,13 +117,7 @@ class SupabaseCRMClient:
 
     def add_project(self, project_data: Dict) -> str:
         """Add a new project"""
-        # Generate project ID
-        result = self.supabase.table("projects").select("id").execute()
-        next_num = len(result.data) + 1
-        project_id = f"PROJ-{next_num:03d}"
-
         data = {
-            "id": project_id,
             "client_id": project_data["client_id"],
             "name": project_data["name"],
             "description": project_data.get("description", ""),
@@ -143,7 +132,7 @@ class SupabaseCRMClient:
         }
 
         result = self.supabase.table("projects").insert(data).execute()
-        return project_id if result.data else None
+        return result.data[0]['id'] if result.data else None
 
     def get_project(self, project_id: str) -> Optional[Dict]:
         """Get project by ID"""
@@ -172,13 +161,7 @@ class SupabaseCRMClient:
 
     def add_interaction(self, interaction_data: Dict) -> str:
         """Log an interaction"""
-        # Generate ID
-        result = self.supabase.table("interactions").select("id").execute()
-        next_num = len(result.data) + 1
-        interaction_id = f"INT-{next_num:03d}"
-
         data = {
-            "id": interaction_id,
             "client_id": interaction_data["client_id"],
             "timestamp": interaction_data.get("timestamp", datetime.now().isoformat()),
             "type": interaction_data.get("type", "Note"),
@@ -197,7 +180,7 @@ class SupabaseCRMClient:
                 "next_followup": data["followup_date"]
             })
 
-        return interaction_id
+        return result.data[0]['id'] if result.data else None
 
     def get_interactions(self, client_id: str = None, limit: int = 50) -> List[Dict]:
         """Get interactions, optionally filtered by client"""
