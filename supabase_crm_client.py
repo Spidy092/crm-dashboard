@@ -132,6 +132,12 @@ class SupabaseCRMClient:
         result = self.supabase.table("projects").insert(data).execute()
         return result.data[0]['id'] if result.data else None
 
+    def update_project(self, project_id: str, updates: Dict):
+        """Update project"""
+        clean_updates = {k: (v if v != "" else None) for k, v in updates.items()}
+        result = self.supabase.table("projects").update(clean_updates).eq("id", project_id).execute()
+        return result.data
+
     def get_project(self, project_id: str) -> Optional[Dict]:
         """Get project by ID"""
         result = self.supabase.table("projects").select("*").eq("id", project_id).execute()
@@ -174,7 +180,7 @@ class SupabaseCRMClient:
         result = self.supabase.table("interactions").insert(data).execute()
 
         # Update client's last_contact and next_followup
-        if data["followup_needed"] and data["followup_date"]:
+        if data.get("followup_needed") and data.get("followup_date"):
             self.update_client(data["client_id"], {
                 "last_contact": datetime.now().date().isoformat(),
                 "next_followup": data["followup_date"]
@@ -196,23 +202,22 @@ class SupabaseCRMClient:
         """Create an invoice"""
         result = self.supabase.table("invoices").select("id").execute()
         next_num = len(result.data) + 1
-        invoice_id = f"INV-{next_num:03d}"
-
+        
+        clean_data = {k: v for k, v in invoice_data.items() if v != ""}
+        
         data = {
-            "id": invoice_id,
-            "client_id": invoice_data["client_id"],
-            "project_id": invoice_data.get("project_id"),
-            "invoice_no": invoice_data.get("invoice_no", f"INV-{datetime.now().strftime('%Y%m%d')}-{next_num:03d}"),
-            "amount": invoice_data["amount"],
-            "due_date": invoice_data["due_date"],
-            "status": invoice_data.get("status", "Pending"),
-            "payment_date": invoice_data.get("payment_date"),
-            "upi_link": invoice_data.get("upi_link", ""),
-            "notes": invoice_data.get("notes", "")
+            "client_id": clean_data["client_id"],
+            "amount": clean_data["amount"],
+            "due_date": clean_data["due_date"],
+            "invoice_no": clean_data.get("invoice_no", f"INV-{datetime.now().strftime('%Y%m%d')}-{next_num:03d}")
         }
+        
+        for field in ["project_id", "status", "payment_date", "upi_link", "notes"]:
+            if field in clean_data:
+                data[field] = clean_data[field]
 
         result = self.supabase.table("invoices").insert(data).execute()
-        return invoice_id
+        return result.data[0]['id'] if result.data else None
 
     def get_invoice(self, invoice_id: str) -> Optional[Dict]:
         """Get invoice by ID"""
