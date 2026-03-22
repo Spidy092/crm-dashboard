@@ -105,7 +105,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/crm/clients":
             self.handle_crm_list_clients()
         elif path == "/api/crm/client":
-            self.handle_crm_add_client()
+            self.handle_crm_add_client(data)
         elif path.startswith("/api/crm/client/"):
             client_id = path.split("/")[3]
             if self.command == "GET":
@@ -113,13 +113,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/crm/projects":
             self.handle_crm_list_projects()
         elif path == "/api/crm/project":
-            self.handle_crm_add_project()
+            self.handle_crm_add_project(data)
         elif path == "/api/crm/stats":
             self.handle_crm_stats()
         elif path == "/api/crm/invoices/pending":
             self.handle_crm_pending_invoices()
         elif path == "/api/crm/interaction":
-            self.handle_crm_add_interaction()
+            self.handle_crm_add_interaction(data)
         else:
             self.send_error(404)
     
@@ -175,17 +175,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e), "setup_required": True}, 500)
     
-    def handle_crm_add_client(self):
+    def handle_crm_add_client(self, data):
         """Add new client"""
         if not SUPABASE_AVAILABLE:
             self.send_json({"error": "Supabase not installed. Run: pip install supabase", "setup_required": True}, 500)
-            return
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length).decode('utf-8')
-        try:
-            data = json.loads(body) if body else {}
-        except:
-            self.send_json({"error": "Invalid JSON"}, 400)
             return
         
         required = ["name", "phone", "email", "company", "project_type"]
@@ -240,17 +233,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
-    def handle_crm_add_project(self):
+    def handle_crm_add_project(self, data):
         """Add new project"""
         if not SUPABASE_AVAILABLE:
             self.send_json({"error": "Supabase not installed. Run: pip install supabase", "setup_required": True}, 500)
-            return
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length).decode('utf-8')
-        try:
-            data = json.loads(body) if body else {}
-        except:
-            self.send_json({"error": "Invalid JSON"}, 400)
             return
         
         required = ["client_id", "name", "price"]
@@ -290,17 +276,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
-    def handle_crm_add_interaction(self):
+    def handle_crm_add_interaction(self, data):
         """Log interaction"""
         if not SUPABASE_AVAILABLE:
             self.send_json({"error": "Supabase not installed. Run: pip install supabase", "setup_required": True}, 500)
-            return
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length).decode('utf-8')
-        try:
-            data = json.loads(body) if body else {}
-        except:
-            self.send_json({"error": "Invalid JSON"}, 400)
             return
         
         if not data.get("client_id") or not data.get("summary"):
