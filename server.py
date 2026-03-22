@@ -18,7 +18,7 @@ try:
     from supabase_crm_client import SupabaseCRMClient
     SUPABASE_AVAILABLE = True
 except ImportError:
-    SUPabase_AVAILABLE = False
+    SUPABASE_AVAILABLE = False
 
 # Configuration
 PORT = 8080
