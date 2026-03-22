@@ -53,21 +53,19 @@ class SupabaseCRMClient:
 
     def add_client(self, client_data: Dict) -> str:
         """Add a new client"""
+        clean_data = {k: v for k, v in client_data.items() if v != ""}
         data = {
-            "name": client_data["name"],
-            "phone": client_data.get("phone"),
-            "email": client_data["email"],
-            "company": client_data["company"],
-            "source": client_data.get("source", "Other"),
-            "status": client_data.get("status", "Lead"),
-            "project_type": client_data["project_type"],
-            "budget": client_data.get("budget"),
-            "notes": client_data.get("notes", ""),
-            "created_date": client_data.get("created_date", datetime.now().date().isoformat()),
-            "last_contact": client_data.get("last_contact", datetime.now().date().isoformat()),
-            "next_followup": client_data.get("next_followup"),
-            "assigned_to": client_data.get("assigned_to", "Electro")
+            "name": clean_data["name"],
+            "email": clean_data["email"]
         }
+        for field in ["phone", "company", "source", "status", "project_type", "budget", "notes", "created_date", "last_contact", "next_followup", "assigned_to"]:
+            if field in clean_data:
+                data[field] = clean_data[field]
+                
+        if "created_date" not in data:
+            data["created_date"] = datetime.now().date().isoformat()
+        if "last_contact" not in data:
+            data["last_contact"] = datetime.now().date().isoformat()
 
         result = self.supabase.table("clients").insert(data).execute()
         if result.data:
@@ -77,7 +75,8 @@ class SupabaseCRMClient:
                 "client_id": client_id,
                 "summary": "Client added to CRM",
                 "type": "System",
-                "followup_needed": bool(data.get("next_followup"))
+                "followup_needed": bool(data.get("next_followup")),
+                "followup_date": data.get("next_followup")
             })
             return client_id
         else:
@@ -90,7 +89,8 @@ class SupabaseCRMClient:
 
     def update_client(self, client_id: str, updates: Dict):
         """Update client"""
-        result = self.supabase.table("clients").update(updates).eq("id", client_id).execute()
+        clean_updates = {k: (v if v != "" else None) for k, v in updates.items()}
+        result = self.supabase.table("clients").update(clean_updates).eq("id", client_id).execute()
         return result.data
 
     def list_clients(self, status: str = None) -> List[Dict]:
@@ -117,19 +117,17 @@ class SupabaseCRMClient:
 
     def add_project(self, project_data: Dict) -> str:
         """Add a new project"""
+        clean_data = {k: v for k, v in project_data.items() if v != ""}
         data = {
-            "client_id": project_data["client_id"],
-            "name": project_data["name"],
-            "description": project_data.get("description", ""),
-            "start_date": project_data.get("start_date", datetime.now().date().isoformat()),
-            "deadline": project_data.get("deadline"),
-            "status": project_data.get("status", "Planning"),
-            "price": project_data.get("price", 0),
-            "paid_amount": project_data.get("paid_amount", 0),
-            "balance": project_data.get("balance", project_data.get("price", 0)),
-            "payment_terms": project_data.get("payment_terms", "50% advance, 50% delivery"),
-            "files_link": project_data.get("files_link", "")
+            "client_id": clean_data["client_id"],
+            "name": clean_data["name"]
         }
+        for field in ["description", "start_date", "deadline", "status", "price", "paid_amount", "balance", "payment_terms", "files_link"]:
+            if field in clean_data:
+                data[field] = clean_data[field]
+                
+        if "start_date" not in data:
+            data["start_date"] = datetime.now().date().isoformat()
 
         result = self.supabase.table("projects").insert(data).execute()
         return result.data[0]['id'] if result.data else None
@@ -161,15 +159,17 @@ class SupabaseCRMClient:
 
     def add_interaction(self, interaction_data: Dict) -> str:
         """Log an interaction"""
+        clean_data = {k: v for k, v in interaction_data.items() if v != ""}
         data = {
-            "client_id": interaction_data["client_id"],
-            "timestamp": interaction_data.get("timestamp", datetime.now().isoformat()),
-            "type": interaction_data.get("type", "Note"),
-            "summary": interaction_data["summary"],
-            "outcome": interaction_data.get("outcome", ""),
-            "followup_needed": interaction_data.get("followup_needed", False),
-            "followup_date": interaction_data.get("followup_date")
+            "client_id": clean_data["client_id"],
+            "summary": clean_data["summary"]
         }
+        for field in ["timestamp", "type", "outcome", "followup_needed", "followup_date"]:
+            if field in clean_data:
+                data[field] = clean_data[field]
+                
+        if "timestamp" not in data:
+            data["timestamp"] = datetime.now().isoformat()
 
         result = self.supabase.table("interactions").insert(data).execute()
 
