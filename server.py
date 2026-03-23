@@ -120,12 +120,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/crm/clients":
                 self.handle_crm_list_clients()
+            elif path == "/api/crm/clients/search":
+                self.handle_crm_search_clients()
             elif path == "/api/crm/projects":
                 self.handle_crm_list_projects()
             elif path == "/api/crm/stats":
                 self.handle_crm_stats()
             elif path == "/api/crm/invoices/pending":
                 self.handle_crm_pending_invoices()
+            elif path.startswith("/api/crm/invoice/") and path.endswith("/pdf"):
+                invoice_id = path.split("/")[3]
+                self.handle_crm_invoice_pdf(invoice_id)
             elif path == "/api/crm/tasks":
                 self.handle_crm_list_tasks()
             elif path.startswith("/api/crm/client/"):
@@ -490,6 +495,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
+    def handle_crm_invoice_pdf(self, invoice_id):
+        """Generate and download invoice PDF"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed"}, 500)
+            return
+        try:
+            crm = SupabaseCRMClient()
+            pdf_bytes = crm.generate_invoice_pdf(invoice_id)
+            
+            # Send PDF response
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", f"attachment; filename=\"invoice-{invoice_id}.pdf\"")
+            self.send_header("Content-Length", str(len(pdf_bytes)))
+            self.end_headers()
+            self.wfile.write(pdf_bytes)
+        except Exception as e:
+            traceback.print_exc()
+            self.send_json({"error": str(e)}, 500)
+    
     def handle_health(self):
         """Health check endpoint"""
         from datetime import datetime
@@ -550,6 +575,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             crm = SupabaseCRMClient()
             crm.update_task(task_id, data)
             self.send_json({"success": True})
+        except Exception as e:
+            self.send_json({"error": str(e)}, 500)
+    
+    def handle_crm_search_clients(self):
+        """Search clients by name, company, phone, email"""
+        if not SUPABASE_AVAILABLE:
+            self.send_json({"error": "Supabase not installed"}, 500)
+            return
+        try:
+            # Get query from URL parameter
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            query = params.get("q", [""])[0]
+            if not query:
+                self.send_json({"error": "Search query required"}, 400)
+                return
+            crm = SupabaseCRMClient()
+            results = crm.search_clients(query)
+            self.send_json({"clients": results, "query": query})
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
     
@@ -1626,7 +1670,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             <div class="card">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <h2>All Clients</h2>
-                    <input type="text" id="search-client" placeholder="Search..." style="width:250px;" onkeyup="filterClients()">
+                    <input type="text" id="search-client" placeholder="Search by name, company, phone, email..." style="width:300px;" onkeyup="searchClients()">
                 </div>
                 <table>
                     <thead>
@@ -2106,14 +2150,30 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             `).join('');
         }
 
-        function filterClients() {
-            const query = document.getElementById('search-client').value.toLowerCase();
-            const filtered = clients.filter(c => 
-                c.name.toLowerCase().includes(query) ||
-                c.company.toLowerCase().includes(query) ||
-                c.phone.includes(query)
-            );
-            renderClients(filtered);
+        // Search clients via API (debounced)
+        let searchTimeout;
+        function searchClients() {
+            const query = document.getElementById('search-client').value.trim();
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                if (query.length === 0) {
+                    // If empty, reload all clients
+                    loadClients();
+                    return;
+                }
+                fetch(`/api/crm/clients/search?q=${encodeURIComponent(query)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.error) {
+                            showAlert(data.error, 'error');
+                            return;
+                        }
+                        renderClients(data.clients);
+                    })
+                    .catch(err => {
+                        showAlert('Search failed: ' + err.message, 'error');
+                    });
+            }, 300); // Debounce 300ms
         }
 
         // Load projects
@@ -2231,6 +2291,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     <td><span class="status status-${inv.status}">${inv.status}</span></td>
                     <td class="actions">
                         <button class="btn btn-sm" onclick="markPaid('${inv.id}')">Mark Paid</button>
+                        <button class="btn btn-sm btn-secondary" onclick="downloadPDF('${inv.id}')">PDF</button>
                         <button class="btn btn-sm btn-secondary" style="color:var(--red);" onclick="deleteRecord('invoice', '${inv.id}')" title="Delete"><i class="fas fa-trash"></i></button>
                     </td>
                 </tr>
@@ -2452,6 +2513,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 loadStats();
             } catch (err) {
                 showAlert('Error: ' + err.message, 'error');
+            }
+        }
+
+        async function downloadPDF(invoiceId) {
+            try {
+                const res = await fetch(`/api/crm/invoice/${invoiceId}/pdf`);
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || 'Failed to generate PDF');
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `invoice-${invoiceId}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (err) {
+                showAlert('PDF Error: ' + err.message, 'error');
             }
         }
 

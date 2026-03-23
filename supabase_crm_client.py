@@ -305,6 +305,167 @@ class SupabaseCRMClient:
         result = self.supabase.table("invoices").select("*").lt("due_date", today).neq("status", "Paid").execute()
         return result.data
 
+    def generate_invoice_pdf(self, invoice_id: str) -> bytes:
+        """Generate PDF invoice for download"""
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+            from reportlab.lib.units import inch, cm
+            from io import BytesIO
+        except ImportError:
+            raise ImportError("reportlab not installed. Run: pip install reportlab")
+        
+        # Get invoice data
+        invoice = self.get_invoice(invoice_id)
+        if not invoice:
+            raise ValueError(f"Invoice {invoice_id} not found")
+        
+        # Get client and project data
+        client = self.get_client(invoice["client_id"])
+        project = None
+        if invoice.get("project_id"):
+            project = self.get_project(invoice["project_id"])
+        
+        # Create PDF buffer
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*inch, bottomMargin=1*inch, leftMargin=1*inch, rightMargin=1*inch)
+        story = []
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'Title',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=30,
+            textColor=colors.HexColor('#F4A31E')  # Your accent color
+        )
+        
+        # Header: Your business info
+        story.append(Paragraph("INVOICE", title_style))
+        story.append(Spacer(1, 12))
+        
+        # Your company details (customize these)
+        company_info = [
+            ["Your Business Name", ""],
+            ["Web Development Services", ""],
+            ["Bangalore, India", ""],
+            ["contact@yourbusiness.com", ""],
+            ["+91 9876543210", ""]
+        ]
+        
+        company_table = Table(company_info, colWidths=[3*inch, 2*inch])
+        company_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (0, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(company_table)
+        story.append(Spacer(1, 30))
+        
+        # Invoice details
+        invoice_info = [
+            ["Invoice Number:", invoice.get("invoice_no", "N/A")],
+            ["Date:", datetime.now().strftime("%B %d, %Y")],
+            ["Due Date:", invoice.get("due_date", "N/A")],
+            ["Status:", invoice.get("status", "Pending")]
+        ]
+        
+        invoice_table = Table(invoice_info, colWidths=[1.5*inch, 3*inch])
+        invoice_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(invoice_table)
+        story.append(Spacer(1, 30))
+        
+        # Bill To (Client)
+        if client:
+            story.append(Paragraph("Bill To:", styles['Heading3']))
+            client_info = [
+                [client.get("name", "N/A"), ""],
+                [client.get("company", "N/A"), ""],
+                [client.get("email", "N/A"), ""],
+                [client.get("phone", "N/A"), ""]
+            ]
+            client_table = Table(client_info, colWidths=[3*inch, 2*inch])
+            client_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(client_table)
+            story.append(Spacer(1, 20))
+        
+        # Project (if linked)
+        if project:
+            story.append(Paragraph("Project:", styles['Heading3']))
+            project_info = [
+                [project.get("name", "N/A"), ""],
+                [project.get("description", "")[:100] + ("..." if len(project.get("description", "")) > 100 else ""), ""]
+            ]
+            project_table = Table(project_info, colWidths=[3*inch, 2*inch])
+            project_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(project_table)
+            story.append(Spacer(1, 20))
+        
+        # Amount Table
+        story.append(Paragraph("Invoice Amount:", styles['Heading3']))
+        amount_data = [
+            ["Description", "Amount (₹)"],
+            ["Service Fee", f"₹{float(invoice.get('amount', 0)):,.2f}"]
+        ]
+        
+        if project:
+            amount_data.insert(1, ["Project", project.get("name", "")])
+        
+        amount_table = Table(amount_data, colWidths=[4*inch, 1.5*inch])
+        amount_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F4A31E')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+        ]))
+        story.append(amount_table)
+        story.append(Spacer(1, 30))
+        
+        # Payment Terms
+        story.append(Paragraph("Payment Terms:", styles['Heading3']))
+        terms = invoice.get("payment_terms", "50% advance, 50% on delivery")
+        story.append(Paragraph(terms, styles['Normal']))
+        story.append(Spacer(1, 20))
+        
+        # UPI/QR (if available)
+        if invoice.get("upi_link"):
+            story.append(Paragraph("Pay via UPI:", styles['Heading3']))
+            story.append(Paragraph(invoice["upi_link"], styles['Normal']))
+            story.append(Spacer(1, 20))
+        
+        # Notes
+        if invoice.get("notes"):
+            story.append(Paragraph("Notes:", styles['Heading3']))
+            story.append(Paragraph(invoice["notes"], styles['Normal']))
+        
+        # Footer
+        story.append(Spacer(1, 50))
+        story.append(Paragraph("Thank you for your business!", styles['Italic']))
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.read()
+
     # ========== TASKS ==========
 
     def add_task(self, task_data: Dict) -> str:
