@@ -126,6 +126,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.handle_crm_stats()
             elif path == "/api/crm/invoices/pending":
                 self.handle_crm_pending_invoices()
+            elif path == "/api/crm/tasks":
+                self.handle_crm_list_tasks()
             elif path.startswith("/api/crm/client/"):
                 client_id = path.split("/")[4]
                 if path.endswith("/interactions"):
