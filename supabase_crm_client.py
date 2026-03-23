@@ -266,14 +266,38 @@ class SupabaseCRMClient:
         result = self.supabase.table("invoices").select("*").in_("status", ["Pending", "Overdue"]).execute()
         return result.data
 
+    def sync_project_financials(self, project_id: str):
+        """Recalculate and update a project's paid_amount and balance from its paid invoices"""
+        try:
+            project = self.get_project(project_id)
+            if not project:
+                return
+            # Sum all paid invoices for this project
+            paid_invoices = self.supabase.table("invoices").select("amount").eq("project_id", project_id).eq("status", "Paid").execute()
+            paid_amount = sum(float(inv.get("amount", 0)) for inv in (paid_invoices.data or []))
+            price = float(project.get("price") or 0)
+            balance = price - paid_amount
+            self.supabase.table("projects").update({
+                "paid_amount": paid_amount,
+                "balance": balance
+            }).eq("id", project_id).execute()
+        except Exception as e:
+            print(f"Warning: Failed to sync project financials for {project_id}: {e}")
+
     def mark_invoice_paid(self, invoice_id: str, payment_date: str = None):
-        """Mark invoice as paid"""
+        """Mark invoice as paid and sync linked project financials"""
         if not payment_date:
             payment_date = datetime.now().date().isoformat()
-        return self.update_invoice(invoice_id, {
+        # Get invoice first to find project_id
+        invoice = self.get_invoice(invoice_id)
+        result = self.update_invoice(invoice_id, {
             "status": "Paid",
             "payment_date": payment_date
         })
+        # Sync project paid_amount & balance if linked
+        if invoice and invoice.get("project_id"):
+            self.sync_project_financials(invoice["project_id"])
+        return result
 
     def get_overdue_invoices(self) -> List[Dict]:
         """Get overdue invoices (due date < today and status not Paid)"""

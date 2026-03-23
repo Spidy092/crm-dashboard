@@ -428,6 +428,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             crm = SupabaseCRMClient()
             invoice_id = crm.add_invoice(data)
+            # If invoice is created as Paid directly, sync project financials immediately
+            if data.get("project_id") and data.get("status") == "Paid":
+                crm.sync_project_financials(data["project_id"])
             self.send_json({"success": True, "invoice_id": invoice_id})
         except Exception as e:
             self.send_json({"error": str(e)}, 500)
@@ -1685,6 +1688,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         <tr>
                             <th>Invoice #</th>
                             <th>Client</th>
+                            <th>Project</th>
                             <th>Amount</th>
                             <th>Due Date</th>
                             <th>Status</th>
@@ -1692,7 +1696,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         </tr>
                     </thead>
                     <tbody id="invoices-table">
-                        <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                        <tr><td colspan="7" class="empty-state">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1863,8 +1867,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             <form id="addInvoiceForm">
                 <div class="form-group">
                     <label>Client *</label>
-                    <select name="client_id" id="invoice-client-select" required>
+                    <select name="client_id" id="invoice-client-select" required onchange="filterInvoiceProjects(this.value)">
                         <option value="">Select client...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Project (optional)</label>
+                    <select name="project_id" id="invoice-project-select">
+                        <option value="">Select client first...</option>
                     </select>
                 </div>
                 <div class="row">
@@ -2206,13 +2216,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         function renderInvoices(list) {
             const tbody = document.getElementById('invoices-table');
             if (list.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No pending invoices</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No pending invoices</td></tr>';
                 return;
             }
             tbody.innerHTML = list.map(inv => `
                 <tr>
                     <td>${inv.invoice_no}</td>
                     <td>${getClientName(inv.client_id)}</td>
+                    <td>${inv.project_id ? getProjectName(inv.project_id) : '<span style="color:var(--muted)">—</span>'}</td>
                     <td>₹${Number(inv.amount).toLocaleString()}</td>
                     <td>${inv.due_date}</td>
                     <td><span class="status status-${inv.status}">${inv.status}</span></td>
@@ -2224,6 +2235,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             `).join('');
         }
 
+        function getProjectName(id) {
+            const project = projects.find(p => p.id === id);
+            return project ? escapeHtml(project.name) : '<span style="color:var(--muted)">—</span>';
+        }
+
+        // Filter the invoice modal's project dropdown based on selected client
+        function filterInvoiceProjects(clientId) {
+            const sel = document.getElementById('invoice-project-select');
+            if (!sel) return;
+            const clientProjects = projects.filter(p => p.client_id === clientId);
+            if (clientProjects.length === 0) {
+                sel.innerHTML = '<option value="">No projects for this client</option>';
+            } else {
+                sel.innerHTML = '<option value="">No specific project</option>' +
+                    clientProjects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+            }
+        }
+
         // Populate project select in add task modal
         async function populateProjectSelect() {
             const selectTaskProj = document.getElementById('task-project-select');
@@ -2231,6 +2260,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if (projects.length === 0) await loadProjects();
             selectTaskProj.innerHTML = '<option value="">Select project...</option>' +
                 projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${getClientName(p.client_id)})</option>`).join('');
+            // Also reset invoice project select
+            const invProjSel = document.getElementById('invoice-project-select');
+            if (invProjSel) invProjSel.innerHTML = '<option value="">Select client first...</option>';
         }
 
         // Load tasks
