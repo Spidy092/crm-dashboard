@@ -9,6 +9,7 @@ import os
 import json
 import subprocess
 import mimetypes
+import traceback
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
@@ -324,7 +325,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             client_id = crm.add_client(data)
             self.send_json({"success": True, "client_id": client_id})
         except Exception as e:
-            self.send_json({"error": str(e)}, 500)
+            # Log full traceback to stderr (captured by Render logs)
+            traceback.print_exc()
+            self.send_json({"error": str(e), "type": type(e).__name__}, 500)
     
     def handle_crm_get_client(self, client_id):
         """Get a specific client"""
